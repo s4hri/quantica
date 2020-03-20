@@ -1,7 +1,7 @@
 """
 BSD 2-Clause License
 
-Copyright (c) 2019, Davide De Tommaso (dtmdvd@gmail.com)
+Copyright (c) 2020, Davide De Tommaso (dtmdvd@gmail.com)
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -31,9 +31,7 @@ import time
 import logging
 import random
 from multiprocessing import Process, Queue
-from multiprocessing.pool import Pool
-from threading import Condition, Thread, Lock
-from sortedcontainers import SortedDict
+from threading import Thread, Lock
 
 FORMAT = '%(created).9f %(levelname)-5s %(message)s'
 logging.basicConfig(level=logging.INFO, format=FORMAT)
@@ -42,7 +40,6 @@ logging.basicConfig(level=logging.INFO, format=FORMAT)
 # A QNode defines an abstraction of a Petri network's node.
 # It is the parent class of QTransition and QPlace
 class QNode:
-
     def __init__(self, nid: int, label: str=None):
         self.__nid__ = nid
         self.__label__ = label
@@ -63,13 +60,16 @@ class QNode:
 
 # A QPlace defines a Petri network's place.
 class QPlace(QNode):
-
-    def __init__(self, target=None, label: str=None, init_tokens: int=0, time_window: float=0):
+    def __init__(self, target=None, label: str=None, init_tokens: int=0, quanta_timeout: float=0):
         QNode.__init__(self, nid=None, label=label)
         self.__tokens__ = init_tokens
         self.__target__ = target
-        self.__time_window__ = time_window
+        self.__quanta_timeout__ = quanta_timeout
         self.__lock__ = Lock()
+
+    @property
+    def ready(self):
+        return self.__ready__
 
     @property
     def tokens(self):
@@ -77,18 +77,17 @@ class QPlace(QNode):
 
     def __process__(self, n):
         for i in range(0, n):
-            t0 = time.process_time_ns()
+            t0 = time.perf_counter()
             self.__target_task__()
-            t1 = time.process_time_ns()
-            if self.__time_window__ > 0:
-                offset = (t1-t0)/1000000000. #offset is in seconds
-                if offset < self.__time_window__:
-                    time.sleep(self.__time_window__ - offset)
+            t1 = time.perf_counter()
+            if self.__quanta_timeout__ > 0:
+                offset = t1-t0
+                if offset < self.__quanta_timeout__:
+                    time.sleep(self.__quanta_timeout__ - offset)
 
     def __target_task__(self):
-        if self.__target__ is None:
-            logging.debug("[QPlace:%s] executing task  ..." % self.label)
-        else:
+        logging.debug("[QPlace:%s] executing task  ..." % self.label)
+        if not self.__target__ is None:
             self.__target__()
 
     def consume(self, n):
@@ -96,18 +95,17 @@ class QPlace(QNode):
         self.__tokens__ -= n
         self.__lock__.release()
 
-    def generate(self, n):
+    def generate(self, n, generations):
+        logging.debug("[QPlace:%s] generating %d token..." % (self.label, n))
+        self.__process__(n)
         self.__lock__.acquire()
-        p = Process(target=self.__process__, args=(n,))
-        p.start()
-        p.join()
         self.__tokens__ += n
         self.__lock__.release()
+        generations.put(self.label, False)
 
 
 # A QPlace defines a Petri network's transition.
 class QTransition(QNode):
-
     def __init__(self, label: str=None):
         QNode.__init__(self, nid=None, label=label)
 
@@ -120,7 +118,7 @@ class QNet:
         self.__arcs__ = {}
         self.__I__ = [] #  Input matrix
         self.__O__ = [] #  Output matrix
-        self.__ready__ = Condition()
+        self.__generations__ = None
 
     @property
     def I(self):
@@ -141,16 +139,19 @@ class QNet:
         return self
 
     def __next__(self):
+        if self.__generations__ is None:
+            self.__generations__ = Queue()
+            self.__generations__.put(0)
+            return self
+        self.__generations__.get()
         v = self.__getEnabledTransitions__()
-        if len(v) == 0:
-            raise StopIteration
-        random.shuffle(v)
-        self.__fire__(v[0])
+        if len(v) > 0:
+            random.shuffle(v)
+            self.__fire__(v[0])
         return self
 
     def __str__(self):
-        res = "\nQNET STATE" + "\n"
-        res += " > Place labels: " + str([x.label for x in self.__places__]) + "\n"
+        res =  " > Place labels: " + str([x.label for x in self.__places__]) + "\n"
         res += " > Place tokens: " + str([x.tokens for x in self.__places__]) + "\n"
         return res
 
@@ -159,25 +160,16 @@ class QNet:
         self.__updateIO__(src_nid, dst_nid, weight)
 
     def __fire__(self, transition: QTransition):
-        logging.debug("[%s] %s fired! " %(self.__class__.__name__, transition.label))
+        logging.info("[%s] %s fired! " %(self.__class__.__name__, transition.label))
         idx = self.__transitions__.index(transition)
-        threads = []
-
         for i in range(0, len(self.__I__)):
             iw = self.__I__[i][idx]
             ow = self.__O__[i][idx]
             place = self.__places__[i]
-            if ow > 0:
-                t = Thread(target=place.generate, args=(ow,))
-                threads.append(t)
-                t.start()
             if iw > 0:
-                t = Thread(target=place.consume, args=(iw,))
-                threads.append(t)
-                t.start()
-
-        for t in threads:
-            t.join()
+                Thread(target=place.consume, args=(iw,)).start()
+            if ow > 0:
+                Thread(target=place.generate, args=(ow, self.__generations__, )).start()
 
     def __getEnabledTransitions__(self):
         v = []

@@ -1,7 +1,7 @@
 """
 BSD 2-Clause License
 
-Copyright (c) 2019, Davide De Tommaso (dtmdvd@gmail.com)
+Copyright (c) 2020, Davide De Tommaso (dtmdvd@gmail.com)
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -30,7 +30,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ex1-producerconsumer.py
 
 Producer-Consumer example presented in
-http://petrinet.org/petrinets/producer-consumer.html
+http://petrinet.org/#ProducerConsumer
 """
 
 from quantica import QPlace, QNet, QTransition
@@ -40,30 +40,30 @@ class Producer(QNet):
 
     def __init__(self):
         QNet.__init__(self)
-        t1 = QTransition(label="t1")
-        t2 = QTransition(label="t2")
-        p1 = QPlace(label="Producer1", init_tokens=1, time_window=1.0)
-        p2 = QPlace(label="Producer2", time_window=1.0)
+        self.T0 = QTransition(label="T0")
+        self.T1 = QTransition(label="T1")
+        self.P0 = QPlace(label="P0", init_tokens=1)
+        self.P1 = QPlace(label="P1")
 
-        self.connect(t1, p1, weight=1)
-        self.connect(p1, t2, weight=1)
-        self.connect(t2, p2, weight=1)
-        self.connect(p2, t1, weight=1)
+        self.connect(self.T0, self.P0, weight=1)
+        self.connect(self.P0, self.T1, weight=1)
+        self.connect(self.T1, self.P1, weight=1)
+        self.connect(self.P1, self.T0, weight=1)
 
 
 class Consumer(QNet):
 
     def __init__(self):
         QNet.__init__(self)
-        t1 = QTransition(label="t1")
-        t2 = QTransition(label="t2")
-        p1 = QPlace(label="Consumer1", time_window=1.0)
-        p2 = QPlace(label="Consumer2", init_tokens=1, time_window=1.0)
+        self.T2 = QTransition(label="T2")
+        self.T3 = QTransition(label="T3")
+        self.P3 = QPlace(label="P3")
+        self.P4 = QPlace(label="P4", init_tokens=1)
 
-        self.connect(t1, p1, weight=1)
-        self.connect(p1, t2, weight=1)
-        self.connect(t2, p2, weight=1)
-        self.connect(p2, t1, weight=1)
+        self.connect(self.T2, self.P3, weight=1)
+        self.connect(self.P3, self.T3, weight=1)
+        self.connect(self.T3, self.P4, weight=1)
+        self.connect(self.P4, self.T2, weight=1)
 
 
 class ProducerConsumer(QNet):
@@ -72,13 +72,12 @@ class ProducerConsumer(QNet):
         QNet.__init__(self)
         producer = Producer()
         consumer = Consumer()
-
-        buffered_link = QPlace(label="Buffer")
+        P2 = QPlace(label="P2")
         self.register([producer, consumer])
-        self.connect(producer.getQNodeByLabel("t2"), buffered_link, 1)
-        self.connect(buffered_link, consumer.getQNodeByLabel("t1"), 1)
+        self.connect(producer.T1, P2, weight=1)
+        self.connect(P2, consumer.T2, weight=1)
 
 net = ProducerConsumer()
-print(net)
+
 for step in iter(net):
-    print(step)
+    input(step)

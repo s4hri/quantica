@@ -1,7 +1,7 @@
 """
 BSD 2-Clause License
 
-Copyright (c) 2019, Davide De Tommaso (dtmdvd@gmail.com)
+Copyright (c) 2020, Davide De Tommaso (dtmdvd@gmail.com)
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -38,42 +38,42 @@ http://petrinet.org/petrinets/split-join.html
 """
 
 from quantica import QPlace, QNet, QTransition
-
+import time
 
 class SplitJoin(QNet):
 
     def __init__(self):
         QNet.__init__(self)
-        pin = QPlace(label='P_in', init_tokens=1)
-        tin = QTransition(label='T_in')
+        self.P0 = QPlace(label='P0', init_tokens=1)
+        self.T1 = QTransition(label='T1')
 
-        p1_1 = QPlace(label='P1_1')
-        t1_1 = QTransition(label='T1_1')
-        p2_1 = QPlace(label='P2_1')
+        self.P1 = QPlace(label='P1')
+        self.T2 = QTransition(label='T2')
+        self.P2 = QPlace(label='P2')
 
-        p1_2 = QPlace(label='P1_2')
-        t1_2 = QTransition(label='T1_2')
-        p2_2 = QPlace(label='P2_2')
+        self.P4 = QPlace(label='P4')
+        self.T3 = QTransition(label='T3')
+        self.P5 = QPlace(label='P5')
 
-        tout = QTransition(label='T_out')
-        pout = QPlace(label='P_out')
+        self.T0 = QTransition(label='T0')
+        self.P3 = QPlace(label='P3')
 
-        self.connect(pin, tin, 1)
+        self.connect(self.P0, self.T1, 1)
 
-        self.connect(tin, p1_1, 1)
-        self.connect(tin, p1_2, 1)
+        self.connect(self.T1, self.P1, 1)
+        self.connect(self.T1, self.P4, 1)
 
-        self.connect(p1_1, t1_1, 1)
-        self.connect(t1_1, p2_1, 1)
+        self.connect(self.P1, self.T2, 1)
+        self.connect(self.T2, self.P2, 1)
 
-        self.connect(p1_2, t1_2, 1)
-        self.connect(t1_2, p2_2, 1)
+        self.connect(self.P4, self.T3, 1)
+        self.connect(self.T3, self.P5, 1)
 
-        self.connect(p2_1, tout, 1)
-        self.connect(p2_2, tout, 1)
-        self.connect(tout, pout, 1)
+        self.connect(self.P2, self.T0, 1)
+        self.connect(self.P5, self.T0, 1)
+        self.connect(self.T0, self.P3, 1)
 
 net = SplitJoin()
-print(net)
+
 for step in iter(net):
     print(step)

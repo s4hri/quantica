@@ -1,7 +1,7 @@
 """
 BSD 2-Clause License
 
-Copyright (c) 2019, Davide De Tommaso (dtmdvd@gmail.com)
+Copyright (c) 2020, Davide De Tommaso (dtmdvd@gmail.com)
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -42,15 +42,15 @@ class Philosopher(QNet):
     def __init__(self, name):
         QNet.__init__(self)
         self.name = name
-        x = QTransition(label="x")
-        y = QTransition(label="y")
-        t = QPlace(label=name+"_t", target=self.think, init_tokens=1)
-        e = QPlace(label=name+"_e", target=self.eat, time_window=random.randrange(1.0, 5.0))
+        self.x = QTransition(label="x")
+        self.y = QTransition(label="y")
+        self.t = QPlace(label=name+"_t", target=self.think, init_tokens=1)
+        self.e = QPlace(label=name+"_e", target=self.eat, quanta_timeout=random.randrange(1.0, 5.0))
 
-        self.connect(t, x, weight=1)
-        self.connect(x, e, weight=1)
-        self.connect(e, y, weight=1)
-        self.connect(y, t, weight=1)
+        self.connect(self.t, self.x, weight=1)
+        self.connect(self.x, self.e, weight=1)
+        self.connect(self.e, self.y, weight=1)
+        self.connect(self.y, self.t, weight=1)
 
     def think(self):
         logging.info("[%s] Thinking ..." % self.name)
@@ -75,28 +75,28 @@ class DiningPhylosophers(QNet):
 
             self.register([ari, sof, pla, era])
 
-            self.connect(ari.getQNodeByLabel("y"), fork1, weight=1)
-            self.connect(ari.getQNodeByLabel("y"), fork2, weight=1)
-            self.connect(fork1, ari.getQNodeByLabel("x"), weight=1)
-            self.connect(fork2, ari.getQNodeByLabel("x"), weight=1)
+            self.connect(ari.y, fork1, weight=1)
+            self.connect(ari.y, fork2, weight=1)
+            self.connect(fork1, ari.x, weight=1)
+            self.connect(fork2, ari.x, weight=1)
 
-            self.connect(sof.getQNodeByLabel("y"), fork2, weight=1)
-            self.connect(sof.getQNodeByLabel("y"), fork3, weight=1)
-            self.connect(fork2, sof.getQNodeByLabel("x"), weight=1)
-            self.connect(fork3, sof.getQNodeByLabel("x"), weight=1)
+            self.connect(sof.y, fork2, weight=1)
+            self.connect(sof.y, fork3, weight=1)
+            self.connect(fork2, sof.x, weight=1)
+            self.connect(fork3, sof.x, weight=1)
 
-            self.connect(pla.getQNodeByLabel("y"), fork3, weight=1)
-            self.connect(pla.getQNodeByLabel("y"), fork4, weight=1)
-            self.connect(fork3, pla.getQNodeByLabel("x"), weight=1)
-            self.connect(fork4, pla.getQNodeByLabel("x"), weight=1)
+            self.connect(pla.y, fork3, weight=1)
+            self.connect(pla.y, fork4, weight=1)
+            self.connect(fork3, pla.x, weight=1)
+            self.connect(fork4, pla.x, weight=1)
 
-            self.connect(era.getQNodeByLabel("y"), fork4, weight=1)
-            self.connect(era.getQNodeByLabel("y"), fork1, weight=1)
-            self.connect(fork4, era.getQNodeByLabel("x"), weight=1)
-            self.connect(fork1, era.getQNodeByLabel("x"), weight=1)
+            self.connect(era.y, fork4, weight=1)
+            self.connect(era.y, fork1, weight=1)
+            self.connect(fork4, era.x, weight=1)
+            self.connect(fork1, era.x, weight=1)
 
 
 net = DiningPhylosophers()
-print(net)
+
 for step in iter(net):
     print(net)
