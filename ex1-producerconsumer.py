@@ -33,17 +33,16 @@ Producer-Consumer example presented in
 http://petrinet.org/#ProducerConsumer
 """
 
-from quantica import QPlace, QNet, QTransition
-
+from core import QPlace, QNet, QTransition
 
 class Producer(QNet):
 
-    def __init__(self):
-        QNet.__init__(self)
-        self.T0 = QTransition(label="T0")
-        self.T1 = QTransition(label="T1")
-        self.P0 = QPlace(label="P0", init_tokens=1)
-        self.P1 = QPlace(label="P1")
+    def __init__(self, label='Producer'):
+        QNet.__init__(self, label)
+        self.T0 = self.createTransition('T0')
+        self.P0 = self.createPlace('P0', init_tokens=1)
+        self.T1 = self.createTransition('T1')
+        self.P1 = self.createPlace('P1')
 
         self.connect(self.T0, self.P0, weight=1)
         self.connect(self.P0, self.T1, weight=1)
@@ -51,33 +50,35 @@ class Producer(QNet):
         self.connect(self.P1, self.T0, weight=1)
 
 
+class Buffer(QNet):
+
+    def __init__(self, label='Buffer'):
+        QNet.__init__(self, label)
+        self.P2 = self.createPlace('P2')
+
 class Consumer(QNet):
 
-    def __init__(self):
-        QNet.__init__(self)
-        self.T2 = QTransition(label="T2")
-        self.T3 = QTransition(label="T3")
-        self.P3 = QPlace(label="P3")
-        self.P4 = QPlace(label="P4", init_tokens=1)
-
+    def __init__(self, label='Consumer'):
+        QNet.__init__(self, label)
+        self.P3 = self.createPlace('P3')
+        self.P4 = self.createPlace('P4', init_tokens=1)
+        self.T2 = self.createTransition('T2')
+        self.T3 = self.createTransition('T3')
         self.connect(self.T2, self.P3, weight=1)
         self.connect(self.P3, self.T3, weight=1)
         self.connect(self.T3, self.P4, weight=1)
         self.connect(self.P4, self.T2, weight=1)
 
 
-class ProducerConsumer(QNet):
+producer = Producer()
+consumer = Consumer()
+buf = Buffer()
+producer.connect(producer.T1, buf.P2, weight=1)
+consumer.connect(buf.P2, consumer.T2, weight=1)
 
-    def __init__(self):
-        QNet.__init__(self)
-        producer = Producer()
-        consumer = Consumer()
-        P2 = QPlace(label="P2")
-        self.register([producer, consumer])
-        self.connect(producer.T1, P2, weight=1)
-        self.connect(P2, consumer.T2, weight=1)
 
-net = ProducerConsumer()
+input()
 
-for step in iter(net):
-    input(step)
+producer.start()
+buf.start()
+consumer.start()
