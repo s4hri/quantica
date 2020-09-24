@@ -35,14 +35,15 @@ http://petrinet.org/#ProducerConsumer
 
 from core import QPlace, QNet, QTransition
 
+
 class Producer(QNet):
 
-    def __init__(self, label='Producer'):
-        QNet.__init__(self, label)
-        self.T0 = self.createTransition('T0')
-        self.P0 = self.createPlace('P0', init_tokens=1)
-        self.T1 = self.createTransition('T1')
-        self.P1 = self.createPlace('P1')
+    def __init__(self):
+        QNet.__init__(self, nid='Producer')
+        self.T0 = self.createTransition()
+        self.P0 = self.createPlace(init_tokens=1)
+        self.T1 = self.createTransition()
+        self.P1 = self.createPlace()
 
         self.connect(self.T0, self.P0, weight=1)
         self.connect(self.P0, self.T1, weight=1)
@@ -52,33 +53,41 @@ class Producer(QNet):
 
 class Buffer(QNet):
 
-    def __init__(self, label='Buffer'):
-        QNet.__init__(self, label)
-        self.P2 = self.createPlace('P2')
+    def __init__(self):
+        QNet.__init__(self, nid='Buffer')
+        self.P2 = self.createPlace()
 
 class Consumer(QNet):
 
-    def __init__(self, label='Consumer'):
-        QNet.__init__(self, label)
-        self.P3 = self.createPlace('P3')
-        self.P4 = self.createPlace('P4', init_tokens=1)
-        self.T2 = self.createTransition('T2')
-        self.T3 = self.createTransition('T3')
+    def __init__(self):
+        QNet.__init__(self, nid='Consumer')
+        self.P3 = self.createPlace()
+        self.P4 = self.createPlace(init_tokens=1)
+        self.T2 = self.createTransition()
+        self.T3 = self.createTransition()
         self.connect(self.T2, self.P3, weight=1)
         self.connect(self.P3, self.T3, weight=1)
         self.connect(self.T3, self.P4, weight=1)
         self.connect(self.P4, self.T2, weight=1)
 
 
-producer = Producer()
-consumer = Consumer()
-buf = Buffer()
-producer.connect(producer.T1, buf.P2, weight=1)
-consumer.connect(buf.P2, consumer.T2, weight=1)
+class ProdCons(QNet):
 
+    def __init__(self):
+        QNet.__init__(self, nid='ProdCons')
+        self.producer = Producer()
+        self.consumer = Consumer()
+        self.buf = Buffer()
 
-input()
+        self.addNet(self.producer)
+        self.addNet(self.consumer)
+        self.addNet(self.buf)
 
-producer.start()
-buf.start()
-consumer.start()
+        self.connect(self.producer.T1, self.buf.P2, weight=1)
+        self.connect(self.buf.P2, self.consumer.T2, weight=1)
+
+net = ProdCons()
+
+print(net.state())
+for i in iter(net):
+    input(i.state())

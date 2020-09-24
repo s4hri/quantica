@@ -33,19 +33,19 @@ Dining Philophers problem using Petri network as shown in
 https://upload.wikimedia.org/wikipedia/commons/7/78/4-philosophers.gif
 """
 
-from quantica import QPlace, QNet, QTransition
+from core import QPlace, QNet, QTransition
 import logging
 import random
+import time
 
 class Philosopher(QNet):
 
-    def __init__(self, name):
-        QNet.__init__(self)
-        self.name = name
-        self.x = QTransition(label="x")
-        self.y = QTransition(label="y")
-        self.t = QPlace(label=name+"_t", target=self.think, init_tokens=1)
-        self.e = QPlace(label=name+"_e", target=self.eat, quanta_timeout=random.randrange(1.0, 5.0))
+    def __init__(self, label):
+        QNet.__init__(self, nid=label)
+        self.x = self.createTransition(label='x')
+        self.y = self.createTransition(label='y')
+        self.t = self.createPlace(label=label+'_t', target_task=self.think, init_tokens=1)
+        self.e = self.createPlace(label=label+'_e', target_task=self.eat)
 
         self.connect(self.t, self.x, weight=1)
         self.connect(self.x, self.e, weight=1)
@@ -53,27 +53,32 @@ class Philosopher(QNet):
         self.connect(self.y, self.t, weight=1)
 
     def think(self):
-        logging.info("[%s] Thinking ..." % self.name)
+        logging.info("[%s] Thinking ..." % self.label)
+        time.sleep(random.randrange(1.0, 5.0))
 
     def eat(self):
-        logging.info("[%s] Eating ..." % self.name)
+        logging.info("[%s] Eating ..." % self.label)
+        time.sleep(random.randrange(1.0, 5.0))
 
 
 class DiningPhylosophers(QNet):
 
         def __init__(self):
-            QNet.__init__(self)
+            QNet.__init__(self, nid='DiningPhylosophers')
             ari = Philosopher("Aristotele")
             sof = Philosopher("Sofocle")
             pla = Philosopher("Platone")
             era = Philosopher("Eraclito")
 
-            fork1 = QPlace(label="Fork 1", init_tokens=1)
-            fork2 = QPlace(label="Fork 2", init_tokens=1)
-            fork3 = QPlace(label="Fork 3", init_tokens=1)
-            fork4 = QPlace(label="Fork 4", init_tokens=1)
+            fork1 = self.createPlace(label="Fork 1", init_tokens=1)
+            fork2 = self.createPlace(label="Fork 2", init_tokens=1)
+            fork3 = self.createPlace(label="Fork 3", init_tokens=1)
+            fork4 = self.createPlace(label="Fork 4", init_tokens=1)
 
-            self.register([ari, sof, pla, era])
+            self.addNet(ari)
+            self.addNet(sof)
+            self.addNet(pla)
+            self.addNet(era)
 
             self.connect(ari.y, fork1, weight=1)
             self.connect(ari.y, fork2, weight=1)
@@ -99,4 +104,4 @@ class DiningPhylosophers(QNet):
 net = DiningPhylosophers()
 
 for step in iter(net):
-    print(net)
+    input(step.state())

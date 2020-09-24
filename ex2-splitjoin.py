@@ -37,26 +37,25 @@ important one.
 http://petrinet.org/petrinets/split-join.html
 """
 
-from quantica import QPlace, QNet, QTransition
-import time
+from core import QPlace, QNet, QTransition
 
 class SplitJoin(QNet):
 
     def __init__(self):
-        QNet.__init__(self)
-        self.P0 = QPlace(label='P0', init_tokens=1)
-        self.T1 = QTransition(label='T1')
+        QNet.__init__(self, nid='SplitJoin')
+        self.P0 = self.createPlace(init_tokens=1, label='P0')
+        self.T1 = self.createTransition(label='T1')
 
-        self.P1 = QPlace(label='P1')
-        self.T2 = QTransition(label='T2')
-        self.P2 = QPlace(label='P2')
+        self.P1 = self.createPlace(label='P1')
+        self.T2 = self.createTransition(label='T2')
+        self.P2 = self.createPlace(label='P2')
 
-        self.P4 = QPlace(label='P4')
-        self.T3 = QTransition(label='T3')
-        self.P5 = QPlace(label='P5')
+        self.P4 = self.createPlace(label='P4')
+        self.T3 = self.createTransition(label='T3')
+        self.P5 = self.createPlace(label='P5')
 
-        self.T0 = QTransition(label='T0')
-        self.P3 = QPlace(label='P3')
+        self.T0 = self.createTransition(label='T0')
+        self.P3 = self.createPlace(label='P3')
 
         self.connect(self.P0, self.T1, 1)
 
@@ -76,4 +75,4 @@ class SplitJoin(QNet):
 net = SplitJoin()
 
 for step in iter(net):
-    print(step)
+    input(step.state())

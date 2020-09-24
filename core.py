@@ -26,264 +26,146 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-from abc import ABC, abstractmethod
-from multiprocessing.managers import BaseManager
-from multiprocessing.connection import Connection, wait
-from multiprocessing.pool import Pool
-from multiprocessing import Process, Pipe
-from threading import Lock, Thread, Condition
-
-import time
-import logging
 import asyncio
+import numpy as np
+import logging
 import random
-import threading
+from abc import abstractmethod
 
 FORMAT = '%(created).9f %(levelname)-5s %(message)s'
 logging.basicConfig(level=logging.DEBUG, format=FORMAT)
 
-class QArc:
-
-    def __init__(self, src_nid: str, dst_nid: str, pipe: Pipe, weight: int):
-        self.__src_nid__ = src_nid
-        self.__dst_nid__ = dst_nid
-        self.__dst_conn__, self.__src_conn__ = pipe
-        self.__weight__ = weight
-
-    @property
-    def dst_conn(self):
-        return self.__dst_conn__
-
-    @property
-    def src_conn(self):
-        return self.__src_conn__
-
-    @property
-    def dst_nid(self):
-        return self.__dst_nid__
-
-    @property
-    def src_nid(self):
-        return self.__src_nid__
-
-    @property
-    def weight(self):
-        return self.__weight__
-
-class QMonitor:
-
-    def __init__(self, node):
-        self.__node__ = node
-        self.__readers_in__ = {}
-        self.__readers_out__ = {}
-
-    def refresh_inputs(self):
-        for k, v in self.__node__.IN.items():
-            self.__readers_in__[v.dst_conn] = k
-        Thread(target=self.__monitor_in__).start()
-
-
-    def refresh_outputs(self):
-        for k, v in self.__node__.OUT.items():
-            self.__readers_out__[v.src_conn] = k
-        Thread(target=self.__monitor_out__).start()
-
-    def __monitor_in__(self):
-        while self.__readers_in__:
-            for r in wait(self.__readers_in__.keys()):
-                msg = r.recv()
-                if msg == 'reset':
-                    return
-                elif type(msg) == int:
-                    self.__node__.generate(int(msg), self.__readers_in__[r])
-
-    def __monitor_out__(self):
-        while self.__readers_out__:
-            for r in wait(self.__readers_out__.keys()):
-                msg = r.recv()
-                if msg == 'reset':
-                    return
-                elif type(msg) == int:
-                    self.__node__.consume(int(msg))
-
-
-# A QNode defines an abstraction of a Petri network's node.
-# It is the parent class of QTransition and QPlace
-class QNode(ABC):
-
-    def __init__(self, nid: str):
-        self.__nid__ = nid
-        self.__inputs__ = {} # QArc objects representing inputs nodes
-        self.__outputs__ = {} # QArc objects representing outputs nodes
-        self.__qmon__ = QMonitor(self)
-
-    def __ready__(self, n):
-        writers = list( map(lambda x: x.src_conn, self.__outputs__.values()) )
-        for w in writers:
-            w.send(n)
-
-    @property
-    def nid(self):
-        return self.__nid__
-
-    @property
-    def IN(self):
-        return self.__inputs__
-
-    @property
-    def OUT(self):
-        return self.__outputs__
-
-    def addIN(self, arc: QArc):
-        if self.IN:
-            list(self.IN.values())[0].src_conn.send('reset')
-        self.IN[arc.src_nid] = arc
-        time.sleep(0.001)
-        self.__qmon__.refresh_inputs()
-
-    def addOUT(self, arc: QArc):
-        if self.OUT:
-            list(self.OUT.values())[0].dst_conn.send('reset')
-        self.OUT[arc.dst_nid] = arc
-        time.sleep(0.001)
-        self.__qmon__.refresh_outputs()
-
-    def ready(self, n):
-        self.__ready__(n)
-
-    @abstractmethod
-    def consume(self, n):
-        raise NotImplementedError("This has to be implemented")
-
-    @abstractmethod
-    def generate(self, n, src_nid):
-        raise NotImplementedError("This has to be implemented")
+class QNode:
+    def __init__(self, nid: str, label: str=None):
+        self.nid = nid
+        if label is None:
+            label = nid
+        self.label = label
 
 class QPlace(QNode):
+    def __init__(self, nid: str, label: str=None, init_tokens: int=0, target_task=None):
+        QNode.__init__(self, nid, label)
+        self.tokens = init_tokens
+        self.target_task = target_task
 
-    def __init__(self, nid: str, target=None, init_tokens: int=0, quanta_timeout: float=0):
-        QNode.__init__(self, nid)
-        self.__tokens__ = init_tokens
-        self.__target__ = target
-        self.__quanta_timeout__ = quanta_timeout
-        self.__lock__ = Lock()
+    def consume(self, n):
+        logging.debug("[QPlace:%s] consuming %d token(s)..." % (self.nid, n))
+        self.tokens -= n
+        if self.tokens > 0:
+            self.task()
+
+    def produce(self, n):
+        logging.debug("[QPlace:%s] producing %d token..." % (self.nid, n))
+        self.tokens += n
+        logging.debug("[QPlace:%s] has %d token..." % (self.nid, self.tokens))
+        if self.tokens > 0:
+            self.task()
+
+    def task(self):
+        logging.debug("[QPlace:%s] processing %d tokens..." % (self.nid, self.tokens))
+        if not self.target_task is None:
+            self.target_task()
+
+
+class QTransition(QNode):
+    def __init__(self, nid: str, label: str=None):
+        QNode.__init__(self, nid, label)
+
+class QMatrix(object):
+    def __init__(self):
+        self.__M__ = np.array([])
 
     @property
-    def tokens(self):
-        return self.__tokens__
+    def nrows(self):
+        return self.__M__.shape[0]
 
-    def __process__(self, n):
-        for i in range(0, n):
-            t0 = time.perf_counter()
-            self.__target_task__()
-            t1 = time.perf_counter()
-            if self.__quanta_timeout__ > 0:
-                offset = t1-t0
-                if offset < self.__quanta_timeout__:
-                    time.sleep(self.__quanta_timeout__ - offset)
+    @property
+    def ncols(self):
+        if self.__M__.shape[0] > 0:
+            return self.__M__.shape[1]
+        return 0
 
-    def __target_task__(self):
-        logging.debug("[QPlace:%s] executing task  ..." % self.nid)
-        if not self.__target__ is None:
-            self.__target__()
+    def getPlaces(self, net):
+        return sorted(net.places)
 
-    def consume(self, n):
-        logging.debug("[QPlace:%s] consuming %d token..." % (self.nid, n))
-        self.__lock__.acquire()
-        self.__tokens__ -= n
-        self.__lock__.release()
+    def getTransitions(self, net):
+        return sorted(net.transitions)
 
-    def generate(self, n, src_nid=None):
-        logging.debug("[QPlace:%s] generating %d token..." % (self.nid, n))
-        self.__process__(n)
-        self.__lock__.acquire()
-        self.__tokens__ += n
-        self.__lock__.release()
-        self.ready(n)
+    def getTransitionColumn(self, net, tnid):
+        return sorted(net.transitions).index(tnid)
 
-# A QTransition defines a Petri network's transition.
-class QTransition(QNode):
-    def __init__(self, nid: str):
-        QNode.__init__(self, nid)
-        self.__gates__ = {}
-        self.fire_cv = Condition()
+    def getPlaceRow(self, net, pnid):
+        return sorted(net.places).index(pnid)
 
-    def generate(self, n, src_nid):
-        if not src_nid in self.__gates__.keys():
-            self.__gates__[src_nid] = n
-        else:
-            self.__gates__[src_nid] += n
+    def getElement(self, i, j):
+        return self.__M__[i,j]
 
-    def consume(self, n):
-        pass
+    def setElement(self, i, j, value):
+        self.__M__[i,j] = value
 
-    def isEnabled(self):
-        for src_id, arc in self.IN.items():
-            if src_id in self.__gates__.keys():
-                if arc.weight > self.__gates__[src_id]:
-                    return False
-            else:
-                return False
-        return True
+    def getColumn(self, i):
+        return self.__M__[:,i]
 
-    def fire(self):
-        logging.info("[%s] %s fired! " %(self.__class__.__name__, self.nid))
+    @property
+    def value(self):
+        return self.__M__
 
-        for k,v in self.IN.items():
-            v.dst_conn.send(self.__gates__[k])
+    def set(self, M):
+        self.__M__ = np.array(M)
 
-        for k, v in self.__gates__.items():
-            self.__gates__[k] = 0
+    @abstractmethod
+    def update(self, net):
+        raise NotImplementedError("This has to be implemented")
 
-        self.ready()
+class QInputMatrix(QMatrix):
+    def __init__(self):
+        QMatrix.__init__(self)
 
-    def ready(self):
-        writers = list( self.__outputs__.values() )
-        for w in writers:
-            w.src_conn.send(w.weight)
+    def update(self, net):
+        I = []
+        for pnid in self.getPlaces(net):
+            row = []
+            for tnid in self.getTransitions(net):
+                row.append(net.weight(pnid, tnid))
+            I.append(row)
+        self.set(I)
+
+class QOutputMatrix(QMatrix):
+    def __init__(self):
+        QMatrix.__init__(self)
+
+    def update(self, net):
+        O = []
+        for pnid in self.getPlaces(net):
+            row = []
+            for tnid in self.getTransitions(net):
+                row.append(net.weight(tnid, pnid))
+            O.append(row)
+        self.set(O)
+
+class QIncidenceMatrix(QMatrix):
+    def __init__(self):
+        QMatrix.__init__(self)
+
+    def update(self, net):
+        self.__M__ = net.O.value - net.I.value
 
 class QNet(QNode):
 
-    def __init__(self, label: str):
-        QNode.__init__(self, nid=label)
-        self.__places__ = {}
-        self.__transitions__ = {}
+    def __init__(self, nid: str, label: str=None):
+        QNode.__init__(self, nid, label)
+        self.places = {}
+        self.transitions = {}
+        self.weights = {}
+        self.__I__ = QInputMatrix()
+        self.__O__ = QOutputMatrix()
+        self.__C__ = QIncidenceMatrix()
 
-    def __addTransition__(self, node: QTransition):
-        if node.nid in self.__transitions__.keys():
-            logging.error("Label %s already present for QTransition" % label)
-            return False
-        self.__transitions__[node.nid] = node
-        return True
 
-    def __addPlace__(self, node: QPlace):
-        if node.nid in self.__places__.keys():
-            logging.error("Label %s already present for QPlace" % label)
-            return False
-        self.__places__[node.nid] = node
-        return True
-
-    def __connectToRemoteNet__(self, address, authkey):
-        with Client(address, authkey=authkey) as conn:
-            self.addOUT(conn)
-
-    def __listener__(self, address, authkey):
-        with Listener(address, authkey=authkey) as listener:
-            with listener.accept() as conn:
-                src_nid = conn.recv()
-                self.addIN(conn)
-
-    def __getEnabledTransitions__(self):
-        v = []
-        for nid, t in self.__transitions__.items():
-            if t.isEnabled():
-                v.append(nid)
-        return v
-
-    def __run__(self):
-        for step in iter(self):
-            time.sleep(0.001)
-            logging.info(self.state())
+    def __update__(self):
+        self.I.update(self)
+        self.O.update(self)
+        self.C.update(self)
 
     def __iter__(self):
         return self
@@ -292,299 +174,141 @@ class QNet(QNode):
         v = self.__getEnabledTransitions__()
         if len(v) > 0:
             random.shuffle(v)
-            self.__transitions__[v[0]].fire()
+            self.fire(v[0])
         return self
 
-    def createPlace(self, label: str, init_tokens: int=0, quanta_timeout: float=0):
-        nid = "%s/%s" % (self.nid, label)
-        place = QPlace(nid, init_tokens=init_tokens, quanta_timeout=quanta_timeout)
-        if self.__addPlace__(place):
-            return place
-        return false
+    def __getEnabledTransitions__(self):
+        v = []
+        for tnid in self.transitions.keys():
+            enabled = True
+            Tcol = self.I.getColumn(self.I.getTransitionColumn(self, tnid))
+            for pnid in self.places.keys():
+                if self.x(pnid) < self.weight(pnid, tnid):
+                    enabled = False
+            if enabled == True:
+                v.append(tnid)
+        return v
 
-    def createTransition(self, label: str):
-        nid = "%s/%s" % (self.nid, label)
-        transition = QTransition(nid)
-        if self.__addTransition__(transition):
-            return transition
-        return None
+    @property
+    def arcs(self):
+        return self.weights.keys()
+
+    @property
+    def I(self):
+        return self.__I__
+
+    @property
+    def O(self):
+        return self.__O__
+
+    @property
+    def C(self):
+        return self.__C__
+
+    def x(self, pnid):
+        return self.places[pnid].tokens
+
+    def addNode(self, node: QNode):
+        if isinstance(node, QTransition):
+            self.transitions[node.nid] = node
+        elif isinstance(node, QPlace):
+            self.places[node.nid] = node
+        self.__update__()
+
+    def addNet(self, net):
+
+        nodes = {**net.places, **net.transitions}
+        remap_nid = {}
+
+        for pnid in sorted(net.places):
+            nid = self.__generatePlaceNid__()
+            remap_nid[pnid] = nid
+            self.__remapNid__(net, pnid, nid)
+            self.addNode(net.places[pnid])
+
+        for tnid in sorted(net.transitions):
+            nid = self.__generateTransitionNid__()
+            remap_nid[tnid] = nid
+            self.__remapNid__(net, tnid, nid)
+            self.addNode(net.transitions[tnid])
+
+        for old_key, new_key in remap_nid.items():
+            self.__remapKey__(net, old_key, new_key)
+
+        self.__remapLabel__(net)
+        nodes = {**net.places, **net.transitions}
+
+        for src_nid, dst_nid in net.weights.keys():
+            self.connect(nodes[src_nid], nodes[dst_nid], net.weights[(src_nid, dst_nid)])
+
+    def __remapLabel__(self, net):
+        for p in net.places.values():
+            p.label = net.label + '/' + p.label
+
+        for t in net.transitions.values():
+            t.label = net.label + '/' + t.label
+
+    def __remapNid__(self, net, old_nid, new_nid):
+        if old_nid in net.places.keys():
+            net.places[old_nid].nid = new_nid
+
+        if old_nid in net.transitions.keys():
+            net.transitions[old_nid].nid = new_nid
+
+    def __remapKey__(self, net, old_key, new_key):
+        if old_key in net.places.keys():
+            net.places[new_key] = net.places.pop(old_key)
+
+        if old_key in net.transitions.keys():
+            net.transitions[new_key] = net.transitions.pop(old_key)
+
+        new_weights = {}
+        kw = list(net.weights.keys())
+        for src_nid, dst_nid in kw:
+            if old_key == src_nid:
+                net.weights[(new_key, dst_nid)] = net.weights.pop((src_nid, dst_nid))
+            elif old_key == dst_nid:
+                net.weights[(src_nid, new_key)] = net.weights.pop((src_nid, dst_nid))
+
+    def __generatePlaceNid__(self):
+        return 'P' + str(len(self.places))
+
+    def __generateTransitionNid__(self):
+        return 'T' + str(len(self.transitions))
+
+    def createPlace(self, init_tokens=0, label=None, target_task=None):
+        p = QPlace(self.__generatePlaceNid__(), label, init_tokens, target_task=target_task)
+        self.addNode(p)
+        return p
+
+    def createTransition(self, label=None):
+        t = QTransition(self.__generateTransitionNid__(), label)
+        self.addNode(t)
+        return t
+
+    def fire(self, tnid):
+        logging.info("[%s] Transition %s fired! " %(self.__class__.__name__, tnid))
+        for pnid in self.places.keys():
+            res = self.weight(tnid, pnid) - self.weight(pnid, tnid)
+            if res > 0:
+                self.places[pnid].produce(res)
+            elif res < 0:
+                self.places[pnid].consume(-res)
+
+    def weight(self, src_nid, dst_nid):
+        if (src_nid, dst_nid) in self.weights.keys():
+            return self.weights[(src_nid, dst_nid)]
+        return 0
 
     def connect(self, src: QNode, dst: QNode, weight: int):
-        arc = QArc(src.nid, dst.nid, Pipe(), weight)
-        dst.addIN(arc)
-        src.addOUT(arc)
+        if (src.nid, dst.nid) in self.arcs:
+            raise Exception('Connection between %s and %s already present!' % (src.nid, dst.nid))
+        self.weights[(src.nid, dst.nid)] = weight
+        self.__update__()
         logging.debug("[%s] connected [%s] to [%s] ... " % (self.__class__.__name__, src.nid, dst.nid))
-
-    def generate(self, n, src_nid=None):
-        pass
-
-    def consume(self, n):
-        pass
-
-    def start(self):
-        for nid, place in self.__places__.items():
-            if place.tokens > 0:
-                place.ready(place.tokens)
-        Thread(target=self.__run__).start()
 
     def state(self):
         state = []
-        for k, v in self.__places__.items():
-            state.append("%s=%d" % (k, v.tokens))
+        for k, v in self.places.items():
+            state.append("%s(%s)=%d" % (k, v.label, v.tokens))
         return state
-
-"""
-
-import time
-import logging
-import random
-from multiprocessing import Process, Queue
-from threading import Thread, Lock
-
-FORMAT = '%(created).9f %(levelname)-5s %(message)s'
-logging.basicConfig(level=logging.DEBUG, format=FORMAT)
-
-class QManager(ABC):
-
-    @abstractmethod
-    def call(self, dst_nid, func, args=()):
-        raise NotImplementedError("This has to be implemented")
-
-class LocalManager(QManager):
-
-    def __init__(self):
-        self.__nodes__ = {}
-
-    def register(self, node):
-        nid = id(node)
-        logging.debug("[%s] A QNode has been registered with nid=%d and label=%s" %(self.__class__.__name__, nid, node.label))
-        self.__nodes__[nid] = node
-        return nid
-
-    def call(self, dst_nid, func, args):
-        if dst_nid in self.__nodes__.keys():
-            res = getattr(self.__nodes__[dst_nid], func)(*args)
-        return res
-
-    def getNode(self, nid):
-        return self.__nodes__[nid]
-
-
-QM_LOCAL = LocalManager()
-
-# A QNode defines an abstraction of a Petri network's node.
-# It is the parent class of QTransition and QPlace
-class QNode(ABC):
-    def __init__(self, label: str=None, qmanager=QM_LOCAL):
-        self.__label__ = label
-        self.__inputs__ = {} # weighted arcs from source nodes
-        self.__outputs__ = {} # weighted arcs to destination nodes
-        self.__manager__ = QM_LOCAL
-        self.__nid__ = self.__manager__.register(self)
-        if label is None:
-            self.__label__ = ("%s-%d") % (self.__class__.__name__, self.__nid__)
-
-    @property
-    def label(self):
-        return self.__label__
-
-    @property
-    def nid(self):
-        return self.__nid__
-
-    @property
-    def IN(self):
-        return self.__inputs__
-
-    @property
-    def OUT(self):
-        return self.__outputs__
-
-    def addIN(self, nid, weight):
-        if not nid in self.IN.keys():
-            self.IN[nid] = weight
-        return True
-
-    def addOUT(self, nid, weight):
-        if not nid in self.OUT.keys():
-            self.OUT[nid] = weight
-        return True
-
-    def connectTo(self, dst_nid, weight):
-        res = self.__manager__.call(dst_nid, 'addIN', args=(self.nid, weight,))
-        if res == False:
-            logging.error("[QNode: %s] Connection to %d failed" % (self.label, dst_nid))
-        else:
-            self.addOUT(dst_nid, weight)
-        return res
-
-    def getLabel(self):
-        return self.__label__
-
-    @abstractmethod
-    def consume(self, n):
-        raise NotImplementedError("This has to be implemented")
-
-    @abstractmethod
-    def generate(self, n):
-        raise NotImplementedError("This has to be implemented")
-
-
-# A QPlace defines a Petri network's place.
-class QPlace(QNode):
-    def __init__(self, target=None, label: str=None, init_tokens: int=0, quanta_timeout: float=0):
-        QNode.__init__(self, label=label)
-        self.__tokens__ = init_tokens
-        self.__target__ = target
-        self.__quanta_timeout__ = quanta_timeout
-        self.__lock__ = Lock()
-
-    @property
-    def ready(self):
-        return self.__ready__
-
-    @property
-    def tokens(self):
-        return self.__tokens__
-
-    def getTokens(self):
-        return self.__tokens__
-
-    def __process__(self, n):
-        for i in range(0, n):
-            t0 = time.perf_counter()
-            self.__target_task__()
-            t1 = time.perf_counter()
-            if self.__quanta_timeout__ > 0:
-                offset = t1-t0
-                if offset < self.__quanta_timeout__:
-                    time.sleep(self.__quanta_timeout__ - offset)
-
-    def __target_task__(self):
-        logging.debug("[QPlace:%s] executing task  ..." % self.label)
-        if not self.__target__ is None:
-            self.__target__()
-
-    def consume(self, n):
-        self.__lock__.acquire()
-        self.__tokens__ -= n
-        self.__lock__.release()
-
-#    def generate(self, n, generations):
-    def generate(self, n):
-        logging.debug("[QPlace:%s] generating %d token..." % (self.label, n))
-        self.__process__(n)
-        self.__lock__.acquire()
-        self.__tokens__ += n
-        self.__lock__.release()
-        #generations.put(self.label, False)
-
-
-# A QPlace defines a Petri network's transition.
-class QTransition(QNode):
-    def __init__(self, label: str=None):
-        QNode.__init__(self, label=label)
-
-    def consume(self, n):
-        print("tr cons")
-
-    def generate(self, n):
-        print("tr gen")
-
-    def isEnabled(self):
-        for nid, iw in self.IN.items():
-            tokens = self.__manager__.call(nid, 'getTokens', args=())
-            if tokens < iw:
-                return False
-        return True
-
-    def fire(self):
-        logging.info("[%s] %s fired! " %(self.__class__.__name__, self.label))
-        for nid, iw in self.IN.items():
-            Thread(target=self.__manager__.call, args=(nid, 'consume', (iw,),) ).start()
-        for nid, ow in self.OUT.items():
-            Thread(target=self.__manager__.call, args=(nid, 'generate', (ow,),) ).start()
-        #Thread(target=place.generate, args=(ow, self.__generations__, )).start()
-
-# A QNet represents a Petri network.
-# A Petri network (graph) is defined by PG = (P, T, A, w).
-# - P: places (QNet.__places__: list)
-# - T: transitions (QNet.__transitions__: list)
-# - A: arcs relation (QNet.__arcs__: list of tuples)
-# - w: weight function for each arc (QNet.weight)
-
-class QNet(QNode):
-
-    def __init__(self, label: str=None):
-        QNode.__init__(self, label=label)
-        self.__places__ = set()
-        self.__transitions__ = set()
-        self.__subnets__ = set()
-        self.__generations__ = None
-
-    @property
-    def X(self):
-        X = {}
-        for nid in self.__places__:
-            tokens = self.__manager__.call(nid, 'getTokens', args=())
-            label = self.__manager__.call(nid, 'getLabel', args=())
-            X[label] = tokens
-        return X
-
-    def consume(self, n):
-        print("consume")
-
-    def generate(self, n):
-        print("generate")
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        #if self.__generations__ is None:
-        #    self.__generations__ = Queue()
-        #    self.__generations__.put(0)
-        #    return self
-        #self.__generations__.get()
-
-        for net in self.__subnets__:
-            self.__manager__.call(net, '__next__', args=())
-        v = self.__getEnabledTransitions__()
-        if len(v) > 0:
-            random.shuffle(v)
-            self.__manager__.call(v[0], 'fire', args=())
-        return self
-
-    def __str__(self):
-        return "%s: %s" % (self.label, str(self.X))
-
-    def __getEnabledTransitions__(self):
-        v = []
-        for nid in self.__transitions__:
-            if self.__manager__.call(nid, 'isEnabled', args=()):
-                v.append(nid)
-        return v
-
-    def __addNode__(self, node: QNode):
-        if isinstance(node, QTransition):
-            self.__transitions__.add(node.nid)
-        elif isinstance(node, QPlace):
-            self.__places__.add(node.nid)
-        elif isinstance(node, QNet):
-            self.__subnets__.add(node.nid)
-            #self.register(node.__places__)
-            #self.register(node.__transitions__)
-            #for src_nid, dst_nid in node.arcs().keys():
-            #    self.__connect__(src_nid, dst_nid, node.arcs()[(src_nid, dst_nid)])
-
-    def connect(self, src: QNode, dst: QNode, weight: int):
-        if isinstance(src, QNet):
-            pass
-        if isinstance(dst, QNet):
-            pass
-        res = src.connectTo(dst.nid, weight)
-        if res == True:
-            self.__addNode__(src)
-            self.__addNode__(dst)
-            logging.debug("[%s] connected [%s] to [%s] ... " % (self.__class__.__name__, src.label, dst.label))
-"""
