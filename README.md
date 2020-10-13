@@ -3,55 +3,28 @@ Distributed computing based on Petri networks (PNs)
 
 # What is quantica?
 Quantica is an Python open-source framework for modeling distributed computing
-based on PNs.
+based on PNs theory.
 
-Quantica is compatible with Python3.7
+Quantica is compatible with Python versions >= 3.8
 
 # How does it work ?
-As explained in PN's theory, a network consists of places and
-transitions. Transitions are event-based conditions which allow the places to
-be enabled. Places are the basic units of code execution. The code execution in
-Places is determined by the presence of tokens.
+As explained in PN's theory, a network consists of places and transitions. Transitions are event-based conditions which allow the places to be enabled.
 
-In Quantica whenever a QPlace (a Place in PN) receives a token, it executes the
-relative task immediately as a separate process. If 'N' tokens are received
-at the same time, the QPlace executes 'N' times the same task. If specified, the
-parameter 'time_window' allows to specify the execution time duration of the
-relative task.
+# Custom code execution
+Places are the basic units of custom code execution. The code execution in
+Places is determined by the presence of tokens. In Quantica whenever a QPlace (a place in PN theory) receives a token, it executes its relative task immediately.
 
-# How to start
+# How to create a QNet ?
+A simple network constisting of a place and a transition is shown below
 
-```python
-from quantica import QPlace, QTransition, QNet
+```
+from quantica.core import QNet
+
+net = QNet('MyQNet')
+P0 = net.createPlace(init_tokens=1)
+T0 = net.createTransition()
+net.connect(P0, T0, weight=1)
 ```
 
-
-## 1. Example of a Petri network
-
-This example shows how to implement a simple Petri network with 2 places and 1 transition
-The parameter 'time_window' set at 2.0 seconds defines the time duration
-of the relative task of place p2 'custom_task' for each token.
-
-```python
-from quantica import QPlace, QTransition, QNet
-
-
-class ExampleNet(QNet):
-
-    def __init__(self):
-        QNet.__init__(self)
-        p1 = QPlace(label='p1', init_tokens=1)
-        t1 = QTransition(label='t1')
-        p2 = QPlace(label='p2', target=self.custom_task, time_window=2.0)
-
-        self.connect(p1, t1, weight=1)
-        self.connect(t1, p2, weight=2)
-
-    def custom_task(self):
-        print("custom task executing...")
-
-net = ExampleNet()
-print(net)
-for step in iter(net):
-      print(step)
-```
+# Acknowledgement
+This work has been inspired by the lectures of Prof. Orazio Mirabella (University of Catania) and is based on the theory covered in the slides of Automation Control of Professor Alessandro De Luca (University of Rome - La Sapienza).
