@@ -25,55 +25,38 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-ex2-splitjoin.py
-
-Split-Join
-
-Expressing events happening in parallel is often necessary.
-This net shows how a single, sequential process can be split into two branches
-which run in parallel and then sync. The concept of parallel computing is an
-important one.
-
-http://petrinet.org/petrinets/split-join.html
 """
 
 from quantica.core import QPlace, QNet, QTransition
+import threading
+import time
 
-class SplitJoin(QNet):
+class QTimed(QNet):
 
-    def __init__(self):
-        QNet.__init__(self, label='SplitJoin')
-        self.P0 = self.createPlace('P0', init_tokens=1)
-        self.T1 = self.createTransition('T1')
+    def __init__(self, interval_ms):
+        QNet.__init__(self, 'QTimed')
+        self._idle_thread = threading.Thread(target=self.__idle__, args=(interval_ms/1000.0,))
+        P0 = self.createPlace(init_tokens=1)
+        T0 = self.createTransition()
+        P1 = self.createPlace(target_task=self.__ctrl__)
+        self.T1 = self.createTransition()
+        self.connect(P0, T0, 1)
+        self.connect(T0, P1, 1)
+        self.connect(P1, self.T1, 1)
 
-        self.P1 = self.createPlace('P1')
-        self.T2 = self.createTransition('T2')
-        self.P2 = self.createPlace('P2')
+    @property
+    def T(self):
+        return self.T1
 
-        self.P4 = self.createPlace('P4')
-        self.T3 = self.createTransition('T3')
-        self.P5 = self.createPlace('P5')
+    def __idle__(self, interval_ms):
+        t0 = time.perf_counter()
+        while True:
+            if (time.perf_counter() - t0) < interval_ms:
+                time.sleep(0.0001)
+                continue
+            else:
+                break
 
-        self.T0 = self.createTransition('T0')
-        self.P3 = self.createPlace('P3')
-
-        self.connect(self.P0, self.T1, 1)
-
-        self.connect(self.T1, self.P1, 1)
-        self.connect(self.T1, self.P4, 1)
-
-        self.connect(self.P1, self.T2, 1)
-        self.connect(self.T2, self.P2, 1)
-
-        self.connect(self.P4, self.T3, 1)
-        self.connect(self.T3, self.P5, 1)
-
-        self.connect(self.P2, self.T0, 1)
-        self.connect(self.P5, self.T0, 1)
-        self.connect(self.T0, self.P3, 1)
-
-net = SplitJoin()
-
-input(net.state())
-for state in net:
-    input(state)
+    def __ctrl__(self):
+        self._idle_thread.start()
+        self._idle_thread.join()

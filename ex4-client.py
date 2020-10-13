@@ -26,40 +26,18 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""
-ex1-producerconsumer.py
-
-Producer-Consumer example presented in
-http://petrinet.org/#ProducerConsumer
-"""
-
-from quantica.core import QNet
-
-class Producer(QNet):
-
-    def __init__(self, label='Producer'):
-        QNet.__init__(self, label=label)
-        self.T0 = self.createTransition('T0')
-        self.P0 = self.createPlace('P0', init_tokens=1)
-        self.T1 = self.createTransition('T1')
-        self.P1 = self.createPlace('P1')
-
-        self.connect(self.T0, self.P0, weight=1)
-        self.connect(self.P0, self.T1, weight=1)
-        self.connect(self.T1, self.P1, weight=1)
-        self.connect(self.P1, self.T0, weight=1)
-
+from quantica.core import QPlace, QNet, QTransition, QNetRemote
 
 class Buffer(QNet):
 
-    def __init__(self, label='Buffer'):
-        QNet.__init__(self, label=label)
+    def __init__(self):
+        QNet.__init__(self, label='Buffer')
         self.P2 = self.createPlace('P2')
 
 class Consumer(QNet):
 
-    def __init__(self, label='Consumer'):
-        QNet.__init__(self, label=label)
+    def __init__(self):
+        QNet.__init__(self, label='Consumer')
         self.P3 = self.createPlace('P3')
         self.P4 = self.createPlace('P4', init_tokens=1)
         self.T2 = self.createTransition('T2')
@@ -69,23 +47,24 @@ class Consumer(QNet):
         self.connect(self.T3, self.P4, weight=1)
         self.connect(self.P4, self.T2, weight=1)
 
+
 class ProdCons(QNet):
 
     def __init__(self):
-        QNet.__init__(self, 'ProdCons')
+        QNet.__init__(self, label='ProdCons')
+        self.producer = QNetRemote(('localhost', 8000))
+        self.consumer = Consumer()
+        self.buf = Buffer()
 
-        self.producer = Producer('Producer')
-        self.buf = Buffer('Buffer')
-        self.consumer = Consumer('Consumer')
-        self.prod = Producer('Producer')
         self.addNet(self.producer)
         self.addNet(self.buf)
         self.addNet(self.consumer)
-        self.connect(self.producer.T1, self.buf.P2, weight=1)
-        self.connect(self.buf.P2, self.consumer.T2, weight=1)
 
+        self.connect('T1.Producer', 'P2.Buffer', weight=1)
+        self.connect('P2.Buffer', 'T2.Consumer', weight=1)
 
 net = ProdCons()
+
 input(net.state())
 for state in net:
     input(state)
