@@ -20,10 +20,10 @@ setup(
     author='Davide De Tommaso',
     author_email='dtmdvd@gmail.com',
     keywords=['petri','networks','python3.8'],
-    packages=find_packages(exclude=['examples*']),
+    packages=find_packages(),
     classifiers = [
                     'Programming Language :: Python :: 3.8',
                     'Programming Language :: Python :: 3.9'
-
     ],
+    python_requires='>=3.8',
 )
