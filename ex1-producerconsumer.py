@@ -88,4 +88,4 @@ class ProdCons(QNet):
 net = ProdCons()
 input(net.state())
 for state in net:
-    input(state)
+    print(state)

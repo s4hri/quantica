@@ -53,21 +53,31 @@ class QNode:
         self.__label__ = label
 
 class QPlace(QNode):
-    def __init__(self, label: str, init_tokens: int=0, target_task=None):
+    def __init__(self, label: str, init_tokens: int=0, target_task=None, max_tokens_allowed=None):
         QNode.__init__(self, label)
         self.__init_tokens__ = init_tokens
         self.reset()
         self.__target_task__ = target_task
+        self.__max_tokens_allowed__ = max_tokens_allowed
+        self.__lock__ = threading.Lock()
 
     def addTokens(self, n):
-        self.__tokens__ += n
+        with self.__lock__:
+            self.__tokens__ += n
 
     def consume(self, n):
         logging.debug("[QPlace:%s] consuming %d token(s)..." % (self.getLabel(), n))
         self.addTokens(-n)
 
     def getTokens(self):
-        return self.__tokens__
+        with self.__lock__:
+            return self.__tokens__
+
+    def isMaxLimitReached(self):
+        if not self.__max_tokens_allowed__ is None:
+            if self.__tokens__ == self.__max_tokens_allowed__:
+                return True
+        return False
 
     def produce(self, n):
         logging.debug("[QPlace:%s] producing %d token(s)..." % (self.getLabel(), n))
@@ -233,6 +243,7 @@ class QNet(QNode):
         return self
 
     def __next__(self, asyn=False):
+
         v = self.getEnabledTransitions()
 
         if len(v) > 0:
@@ -258,15 +269,36 @@ class QNet(QNode):
         if len(v) == 0 and asyn is False:
             raise StopIteration
 
+    def isMaxLimitReached(self, uri):
+        place = self.getNode(uri)
+        if isinstance(place, QPlace):
+            return place.isMaxLimitReached()
+        return place.isMaxLimitReached(self.__subnet_URIs__[place.getLabel()][uri])
+
     def isTransitionEnabled(self, t_uri):
+        I_column_sum = 0
+        O_column_sum = 0
+
+        for p_uri in self.getPlacesURIs():
+            I_column_sum += self.weight(p_uri, t_uri)
+            O_column_sum += self.weight(t_uri, p_uri)
+        if I_column_sum == 0:
+            return False
+        if O_column_sum == 0:
+            return False
+
         enabled = True
         for p_uri in self.getPlacesURIs():
             place = self.getNode(p_uri)
             if isinstance(place, QPlace):
+                if place.isMaxLimitReached() and self.weight(t_uri, p_uri) > 0:
+                    return False
                 if place.getTokens() < self.weight(p_uri, t_uri):
                     enabled = False
             else:
                 remap_puri = self.__subnet_URIs__[place.getLabel()][p_uri]
+                if place.isMaxLimitReached(remap_puri) and self.weight(t_uri, p_uri) > 0:
+                    return False
                 if place.getTokens(remap_puri) < self.weight(p_uri, t_uri):
                     enabled = False
         return enabled
@@ -390,10 +422,10 @@ class QNet(QNode):
         for place in self.__places__.values():
             place.reset()
 
-    def createPlace(self, label=None, init_tokens=0, target_task=None):
+    def createPlace(self, label=None, init_tokens=0, target_task=None, max_tokens_allowed=None):
         if label is None:
             label = 'P' + str(self.nplaces)
-        p = QPlace(label, init_tokens, target_task=target_task)
+        p = QPlace(label, init_tokens, target_task=target_task, max_tokens_allowed=max_tokens_allowed)
         uri = self.__generateURI__(label, suffix=self.getLabel())
         self.addNode(p, uri)
         return uri
@@ -401,7 +433,7 @@ class QNet(QNode):
     def createTransition(self, label=None, uri=None):
         if label is None:
             label = 'T' + str(self.ntransitions)
-        t = QTransition(label)
+        t = QTransition(label=label)
         uri = self.__generateURI__(label, suffix=self.getLabel())
         self.addNode(t, uri)
         return uri
@@ -409,17 +441,15 @@ class QNet(QNode):
     def fire(self, t_uri):
         logging.debug("[%s] Transition %s fired! " % (self.getLabel(), t_uri))
         thread_list = []
+        self.__pending_threads__ = []
 
         for p_uri in self.getPlacesURIs():
             res = self.weight(t_uri, p_uri) - self.weight(p_uri, t_uri)
 
             if res < 0:
-                t = threading.Thread(target=self.consume, args=(p_uri, res,))
-                t.start()
-                self.__pending_threads__.append(t)
+                self.consume(p_uri, res)
 
             elif res > 0:
-
                 t = threading.Thread(target=self.produce, args=(p_uri, res,))
                 t.start()
                 self.__pending_threads__.append(t)

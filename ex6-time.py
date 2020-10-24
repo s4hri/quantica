@@ -30,14 +30,16 @@ from quantica.core import QNet
 from quantica.models import QTimed
 import time
 import threading
+import logging
 
-qnet = QNet('QTimedEx')
-P0 = qnet.createPlace()
-t = QTimed(5000.0)
+def snap():
+    print("%s Here I am" % str(time.perf_counter()))
+
+qnet = QNet(label='QTimedEx', logging_level=logging.INFO)
+t = QTimed(1000)
 qnet.addNet(t)
-qnet.connect(t.T, P0, 1)
-
-t0 = time.perf_counter()
+P0 = qnet.createPlace(label='PIN', init_tokens=5)
+P1 = qnet.createPlace(label='POUT', target_task=snap)
+qnet.connect(P0, t.T_IN, 1)
+qnet.connect(t.T_OUT, P1, 1)
 qnet.next_until_end()
-t1 = time.perf_counter()
-print("Elapsed time: %.4f seconds" % float(t1-t0))

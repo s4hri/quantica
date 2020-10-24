@@ -35,28 +35,31 @@ class QTimed(QNet):
 
     def __init__(self, interval_ms):
         QNet.__init__(self, 'QTimed')
-        self._idle_thread = threading.Thread(target=self.__idle__, args=(interval_ms/1000.0,))
-        P0 = self.createPlace(init_tokens=1)
-        T0 = self.createTransition()
-        P1 = self.createPlace(target_task=self.__ctrl__)
-        self.T1 = self.createTransition()
-        self.connect(P0, T0, 1)
-        self.connect(T0, P1, 1)
+        self._interval_ms = interval_ms
+        self.T0 = self.createTransition(label='T_IN')
+        P1 = self.createPlace(target_task=self.__idle__, max_tokens_allowed=1)
+        self.T1 = self.createTransition('T_OUT')
+        self.connect(self.T0, P1, 1)
         self.connect(P1, self.T1, 1)
+        self._lock = threading.Lock()
 
     @property
-    def T(self):
+    def T_OUT(self):
         return self.T1
 
-    def __idle__(self, interval_ms):
-        t0 = time.perf_counter()
-        while True:
-            if (time.perf_counter() - t0) < interval_ms:
-                time.sleep(0.0001)
-                continue
-            else:
-                break
+    @property
+    def T_IN(self):
+        return self.T0
 
-    def __ctrl__(self):
-        self._idle_thread.start()
-        self._idle_thread.join()
+    def __idle__(self):
+        t0 = time.perf_counter()
+        with self._lock:
+            interval = self._interval_ms/1000.0
+            t0 = time.perf_counter()
+            while True:
+                t1 = time.perf_counter()
+                if (t1 - t0) < interval:
+                    time.sleep(0.00001)
+                    continue
+                else:
+                    break
