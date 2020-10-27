@@ -36,7 +36,7 @@ def snap():
     print("%s Here I am" % str(time.perf_counter()))
 
 qnet = QNet(label='QTimedEx', logging_level=logging.INFO)
-t = QTimed(1000)
+t = QTimed('t1sec', 1000)
 qnet.addNet(t)
 P0 = qnet.createPlace(label='PIN', init_tokens=5)
 P1 = qnet.createPlace(label='POUT', target_task=snap)

@@ -33,8 +33,8 @@ import time
 
 class QTimed(QNet):
 
-    def __init__(self, interval_ms):
-        QNet.__init__(self, 'QTimed')
+    def __init__(self, name, interval_ms):
+        QNet.__init__(self, name)
         self._interval_ms = interval_ms
         self.T0 = self.createTransition(label='T_IN')
         P1 = self.createPlace(target_task=self.__idle__, max_tokens_allowed=1)
