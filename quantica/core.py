@@ -259,15 +259,23 @@ class QNet(QNode):
 
                 x.append(res)
             self.__x__.set(x)
-
             if asyn is False:
                 for t in self.__pending_threads__:
                     t.join()
-
             return self.state()
 
-        if len(v) == 0 and asyn is False:
+        if len(v) == 0:
+            if asyn == True:
+                for t in self.__pending_threads__:
+                    if not t.is_alive():
+                        self.__pending_threads__.remove(t)
+
+                if len(self.__pending_threads__) > 0:
+                    return self.state()
+
             raise StopIteration
+
+
 
     def isMaxLimitReached(self, uri):
         place = self.getNode(uri)
