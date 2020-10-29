@@ -32,14 +32,29 @@ import time
 import threading
 import logging
 
-def snap():
-    print("%s Here I am" % str(time.perf_counter()))
+TASK_PERIOD_MS = 1000.0
+TASK_DURATION_MS = 100.0
 
-qnet = QNet(label='QTimedEx', logging_level=logging.INFO)
-t = QTimed('t1sec', 1000)
-qnet.addNet(t)
-X = qnet.createPlace(label='X', init_tokens=5)
-Y = qnet.createPlace(label='Y', target_task=snap)
-qnet.connect(X, t.T_IN, 1)
-qnet.connect(t.T_OUT, Y, 1)
+def onset():
+    logging.info("Task ONSET")
+
+def offset():
+    logging.info("Task OFFSET")
+
+qnet = QNet('QTimed', logging_level=logging.INFO)
+X0 = qnet.createPlace('X0', init_tokens=5)
+X1 = qnet.createPlace('X1', init_tokens=0, target_task=onset)
+X2 = qnet.createPlace('X2', init_tokens=0)
+X3 = qnet.createPlace('X3', init_tokens=0, target_task=offset)
+
+t_onset = QTimed('onset', PERIOD_MS)
+t_offset = QTimed('offset', TASK_DURATION_MS)
+qnet.addNet(t_onset)
+qnet.addNet(t_offset)
+qnet.connect(X0, t_onset.T_IN, 1)
+qnet.connect(t_onset.T_OUT, X1, 1)
+qnet.connect(t_onset.T_OUT, X2, 1)
+qnet.connect(X2, t_offset.T_IN, 1)
+qnet.connect(t_offset.T_OUT, X3, 1)
+
 qnet.start_async()

@@ -103,4 +103,4 @@ class DiningPhylosophers(QNet):
 
 net = DiningPhylosophers()
 
-net.start()
+net.start_async()

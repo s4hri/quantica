@@ -69,15 +69,14 @@ class Consumer(QNet):
         self.connect(self.T3, self.P4, weight=1)
         self.connect(self.P4, self.T2, weight=1)
 
-class ProdCons(QNet):
+class Net(QNet):
 
     def __init__(self):
-        QNet.__init__(self, 'ProdCons')
+        QNet.__init__(self, 'Net')
 
         self.producer = Producer('Producer')
         self.buf = Buffer('Buffer')
         self.consumer = Consumer('Consumer')
-        self.prod = Producer('Producer')
         self.addNet(self.producer)
         self.addNet(self.buf)
         self.addNet(self.consumer)
@@ -85,7 +84,6 @@ class ProdCons(QNet):
         self.connect(self.buf.P2, self.consumer.T2, weight=1)
 
 
-net = ProdCons()
-input(net.state())
+net = Net()
 for state in net:
-    print(state)
+    input(state)

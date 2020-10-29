@@ -41,7 +41,6 @@ class QTimed(QNet):
         self.T1 = self.createTransition('T_OUT')
         self.connect(self.T0, P1, 1)
         self.connect(P1, self.T1, 1)
-        self._lock = threading.Lock()
 
     @property
     def T_OUT(self):
@@ -53,13 +52,12 @@ class QTimed(QNet):
 
     def __idle__(self):
         t0 = time.perf_counter()
-        with self._lock:
-            interval = self._interval_ms/1000.0
-            t0 = time.perf_counter()
-            while True:
-                t1 = time.perf_counter()
-                if (t1 - t0) < interval:
-                    time.sleep(0.00001)
-                    continue
-                else:
-                    break
+        interval = self._interval_ms/1000.0
+        t0 = time.perf_counter()
+        while True:
+            t1 = time.perf_counter()
+            if (t1 - t0) < interval:
+                time.sleep(0.00001)
+                continue
+            else:
+                break

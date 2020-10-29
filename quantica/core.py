@@ -34,13 +34,12 @@ from abc import abstractmethod
 
 from xmlrpc.server import SimpleXMLRPCServer
 from xmlrpc.server import SimpleXMLRPCRequestHandler
+from socketserver import ThreadingMixIn
 import xmlrpc.client
 
-from urllib.parse import urlparse
-from multiprocessing import Process
-
 import time
-FORMAT = '%(created).9f %(levelname)-5s %(message)s'
+
+FORMAT = '%(asctime)s.%(msecs)03d %(levelname)-5s %(message)s'
 
 class QNode:
     def __init__(self, label: str):
@@ -52,6 +51,7 @@ class QNode:
     def setLabel(self, label):
         self.__label__ = label
 
+
 class QPlace(QNode):
     def __init__(self, label: str, init_tokens: int=0, target_task=None, max_tokens_allowed=None):
         QNode.__init__(self, label)
@@ -59,19 +59,17 @@ class QPlace(QNode):
         self.reset()
         self.__target_task__ = target_task
         self.__max_tokens_allowed__ = max_tokens_allowed
-        self.__lock__ = threading.Lock()
+        self.__working__ = threading.Lock()
 
     def addTokens(self, n):
-        with self.__lock__:
-            self.__tokens__ += n
+        self.__tokens__ += n
 
     def consume(self, n):
-        logging.debug("[QPlace:%s] consuming %d token(s)..." % (self.getLabel(), n))
+        logging.debug("[%s] consuming %d token(s)..." % (self.getLabel(), n))
         self.addTokens(-n)
 
     def getTokens(self):
-        with self.__lock__:
-            return self.__tokens__
+        return self.__tokens__
 
     def isMaxLimitReached(self):
         if not self.__max_tokens_allowed__ is None:
@@ -79,20 +77,25 @@ class QPlace(QNode):
                 return True
         return False
 
+    def isWorking(self):
+        return self.__working__.locked()
+
     def produce(self, n):
-        logging.debug("[QPlace:%s] producing %d token(s)..." % (self.getLabel(), n))
-        if (self.getTokens() + n) > 0:
-            self.task()
+        logging.debug("[%s] producing %d token(s)..." % (self.getLabel(), n))
         self.addTokens(n)
-        logging.debug("[QPlace:%s] has %d token..." % (self.getLabel(), self.getTokens()))
+        logging.debug("[%s] has %d token..." % (self.getLabel(), self.getTokens()))
+        threading.Thread(target=self.task).start()
 
     def reset(self):
         self.__tokens__ = self.__init_tokens__
 
     def task(self):
         if not self.__target_task__ is None:
-            logging.debug("[QPlace:%s] executing task ..." % self.getLabel())
-            self.__target_task__()
+            with self.__working__:
+                logging.debug("[%s] executing task ..." % self.getLabel())
+                t0 = time.perf_counter()
+                self.__target_task__()
+                logging.debug("[%s] task executed task!" % self.getLabel())
 
 class QTransition(QNode):
     def __init__(self, label: str):
@@ -194,9 +197,6 @@ class QNodeList(object):
     def values(self):
         return self.__nodes__.values()
 
-from socketserver import ThreadingMixIn
-from xmlrpc.server import SimpleXMLRPCServer
-
 class SimpleThreadedXMLRPCServer(ThreadingMixIn, SimpleXMLRPCServer):
     pass
 
@@ -204,7 +204,7 @@ class QNet(QNode):
 
     def __init__(self, label, address=None, logging_level=logging.DEBUG, format=FORMAT):
         QNode.__init__(self, label)
-        logging.basicConfig(level=logging_level, format=FORMAT)
+        logging.basicConfig(level=logging_level, format=FORMAT, datefmt='%H:%M:%S')
         self.__places__ = QNodeList()
         self.__transitions__ = QNodeList()
         self.__weights__ = {}
@@ -215,154 +215,8 @@ class QNet(QNode):
         self.__C__ = QIncidenceMatrix()
         self.__x__ = QMatrix()
         self.__address__ = address
-        self.__pending_threads__ = []
         if not address is None:
             threading.Timer(0.0, self.__rpcserver__).start()
-
-    def __getNidFromURI__(self, uri):
-        return self.__URIs__[uri]
-
-    def __getSubnetURI__(self, net, uri):
-        for k, v in self.__subnet_URIs__[net.getLabel()].items():
-            if v == uri:
-                return k
-        return None
-
-    def __rpcserver__(self):
-        with SimpleThreadedXMLRPCServer(self.__address__, requestHandler=RequestHandler, allow_none=True) as server:
-            server.register_introspection_functions()
-            server.register_instance(self)
-            server.serve_forever()
-
-    def __update__(self):
-        self.__I__.update(self)
-        self.__O__.update(self)
-        self.__C__.update(self)
-
-    def __iter__(self):
-        return self
-
-    def __next__(self, asyn=False):
-
-        v = self.getEnabledTransitions()
-
-        if len(v) > 0:
-            self.fire(v[0])
-            x = []
-            for uri in self.getPlacesURIs():
-                place = self.getNode(uri)
-
-                if isinstance(place, QPlace):
-                    res = place.getTokens()
-                else:
-                    res = place.getTokens(self.__subnet_URIs__[place.getLabel()][uri])
-
-                x.append(res)
-            self.__x__.set(x)
-            if asyn is False:
-                for t in self.__pending_threads__:
-                    t.join()
-            return self.state()
-
-        if len(v) == 0:
-            if asyn == True:
-                for t in self.__pending_threads__:
-                    if not t.is_alive():
-                        self.__pending_threads__.remove(t)
-
-                if len(self.__pending_threads__) > 0:
-                    return self.state()
-
-            raise StopIteration
-
-
-
-    def isMaxLimitReached(self, uri):
-        place = self.getNode(uri)
-        if isinstance(place, QPlace):
-            return place.isMaxLimitReached()
-        return place.isMaxLimitReached(self.__subnet_URIs__[place.getLabel()][uri])
-
-    def isTransitionEnabled(self, t_uri):
-        I_column_sum = 0
-        O_column_sum = 0
-
-        for p_uri in self.getPlacesURIs():
-            I_column_sum += self.weight(p_uri, t_uri)
-            O_column_sum += self.weight(t_uri, p_uri)
-        if I_column_sum == 0:
-            return False
-        if O_column_sum == 0:
-            return False
-
-        enabled = True
-        for p_uri in self.getPlacesURIs():
-            place = self.getNode(p_uri)
-            if isinstance(place, QPlace):
-                if place.isMaxLimitReached() and self.weight(t_uri, p_uri) > 0:
-                    return False
-                if place.getTokens() < self.weight(p_uri, t_uri):
-                    enabled = False
-            else:
-                remap_puri = self.__subnet_URIs__[place.getLabel()][p_uri]
-                if place.isMaxLimitReached(remap_puri) and self.weight(t_uri, p_uri) > 0:
-                    return False
-                if place.getTokens(remap_puri) < self.weight(p_uri, t_uri):
-                    enabled = False
-        return enabled
-
-    def getEnabledTransitions(self):
-        v = []
-        for uri in self.getTransitionsURIs():
-            res = self.isTransitionEnabled(uri)
-            if res == True:
-                v.append(uri)
-        random.shuffle(v)
-        return v
-
-    def getPlacesURIs(self):
-        return sorted(list(self.__places__.keys()))
-
-    def getTransitionsURIs(self):
-        return sorted(list(self.__transitions__.keys()))
-
-    def getArcs(self):
-        return list(self.arcs)
-
-    def getPlaces(self):
-        return self.__places__
-
-    def getTransitions(self):
-        return self.__transitions__
-
-    def getNode(self, uri):
-        if uri in self.getPlacesURIs():
-            return self.__places__[uri]
-        if uri in self.getTransitionsURIs():
-            return self.__transitions__[uri]
-        return None
-
-    def getTokens(self, uri):
-        place = self.getNode(uri)
-        if isinstance(place, QPlace):
-            return place.getTokens()
-        return place.getTokens(self.__subnet_URIs__[place.getLabel()][uri])
-
-    def getNodeLabel(self, uri):
-        if uri in self.getPlacesURIs():
-            if isinstance(self.getNode(uri), QNet):
-                return self.__subnet_URIs__[self.getNode(uri).getLabel()][uri]
-            return self.__places__[uri].getLabel()
-        elif uri in self.getTransitionsURIs():
-            if isinstance(self.getNode(uri), QNet):
-                return self.__subnet_URIs__[self.getNode(uri).getLabel()][uri]
-            return self.getNode(uri).getLabel()
-        else:
-            raise Exception("Requested URI does not exist")
-
-    def start(self):
-        while True:
-            self.__next__(asyn=True)
 
     @property
     def arcs(self):
@@ -392,6 +246,51 @@ class QNet(QNode):
     def x(self):
         return self.__x__.value.transpose()
 
+    def __generateURI__(self, label, suffix=''):
+        if len(suffix) == 0:
+            return label
+        return "%s.%s" % (label, suffix)
+
+    def __getSubnetURI__(self, net, uri):
+        for k, v in self.__subnet_URIs__[net.getLabel()].items():
+            if v == uri:
+                return k
+        return None
+
+    def __rpcserver__(self):
+        with SimpleThreadedXMLRPCServer(self.__address__, requestHandler=RequestHandler, allow_none=True, logRequests=False) as server:
+            server.register_introspection_functions()
+            server.register_instance(self)
+            server.serve_forever()
+
+    def __update__(self):
+        self.__I__.update(self)
+        self.__O__.update(self)
+        self.__C__.update(self)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        v = self.getEnabledTransitions()
+        if len(v) > 0:
+            self.fire(v[0])
+            x = []
+            for uri in self.getPlacesURIs():
+                place = self.getNode(uri)
+
+                if isinstance(place, QPlace):
+                    res = place.getTokens()
+                else:
+                    res = place.getTokens(self.__subnet_URIs__[place.getLabel()][uri])
+
+                x.append(res)
+            self.__x__.set(x)
+            return self.state()
+
+        if len(v) == 0:
+            raise StopIteration
+
     def addNode(self, node: QNode, uri: str):
         if (uri in self.getPlacesURIs()) or (uri in self.getTransitionsURIs()):
             raise Exception('URI <%s> already present! Please use a unique URI instead' % uri)
@@ -407,12 +306,12 @@ class QNet(QNode):
 
         self.__subnet_URIs__[net.getLabel()] = {}
         for p_uri in net.getPlacesURIs():
-            uri = self.__generateURI__(label=net.getNodeLabel(p_uri), suffix=net.getLabel())
+            uri = self.__generateURI__(label=net.getNodeLabel(p_uri))
             self.__places__[uri] = net #QNodes present in external QNet
             self.__subnet_URIs__[net.getLabel()][uri] = p_uri
 
         for t_uri in net.getTransitionsURIs():
-            uri = self.__generateURI__(label=net.getNodeLabel(t_uri), suffix=net.getLabel())
+            uri = self.__generateURI__(label=net.getNodeLabel(t_uri))
             self.__transitions__[uri] = net #QNodes present in external QNet
             self.__subnet_URIs__[net.getLabel()][uri] = t_uri
 
@@ -421,53 +320,12 @@ class QNet(QNode):
             mapped_dst_uri = self.__getSubnetURI__(net, dst_uri)
             self.connect(mapped_src_uri, mapped_dst_uri, net.weight(src_uri, dst_uri))
 
-    def __generateURI__(self, label, suffix=''):
-        if len(suffix) == 0:
-            return label
-        return "%s.%s" % (label, suffix)
-
-    def reset(self):
-        for place in self.__places__.values():
-            place.reset()
-
-    def createPlace(self, label=None, init_tokens=0, target_task=None, max_tokens_allowed=None):
-        if label is None:
-            label = 'P' + str(self.nplaces)
-        p = QPlace(label, init_tokens, target_task=target_task, max_tokens_allowed=max_tokens_allowed)
-        uri = self.__generateURI__(label, suffix=self.getLabel())
-        self.addNode(p, uri)
-        return uri
-
-    def createTransition(self, label=None, uri=None):
-        if label is None:
-            label = 'T' + str(self.ntransitions)
-        t = QTransition(label=label)
-        uri = self.__generateURI__(label, suffix=self.getLabel())
-        self.addNode(t, uri)
-        return uri
-
-    def fire(self, t_uri):
-        logging.debug("[%s] Transition %s fired! " % (self.getLabel(), t_uri))
-        thread_list = []
-        self.__pending_threads__ = []
-
-        for p_uri in self.getPlacesURIs():
-            res = self.weight(t_uri, p_uri) - self.weight(p_uri, t_uri)
-
-            if res < 0:
-                self.consume(p_uri, res)
-
-            elif res > 0:
-                t = threading.Thread(target=self.produce, args=(p_uri, res,))
-                t.start()
-                self.__pending_threads__.append(t)
-
-    def produce(self, p_uri, weight):
-        place = self.__places__[p_uri]
-        if isinstance(place, QPlace):
-            place.produce(weight)
-        else:
-            place.produce(self.__subnet_URIs__[place.getLabel()][p_uri], weight)
+    def connect(self, src_uri: str, dst_uri: str, weight: int):
+        if (src_uri, dst_uri) in self.arcs:
+            raise Exception('Connection between %s and %s already present!' % (src_uri, dst_uri))
+        self.__weights__[(src_uri, dst_uri)] = weight
+        self.__update__()
+        logging.debug("[%s] connected [%s] to [%s] ... " % (self.getLabel(), src_uri, dst_uri))
 
     def consume(self, p_uri, weight):
         place = self.__places__[p_uri]
@@ -476,17 +334,158 @@ class QNet(QNode):
         else:
             place.consume(self.__subnet_URIs__[place.getLabel()][p_uri], weight)
 
-    def weight(self, src_uri, dst_uri):
-        if (src_uri, dst_uri) in self.__weights__.keys():
-            return self.__weights__[(src_uri, dst_uri)]
-        return 0
+    def createPlace(self, label=None, init_tokens=0, target_task=None, max_tokens_allowed=None):
+        if label is None:
+            label = 'P' + str(self.nplaces)
+        p = QPlace(label, init_tokens, target_task=target_task, max_tokens_allowed=max_tokens_allowed)
+        uri = self.__generateURI__(label, suffix=self.getLabel())
+        p.setLabel(uri)
+        self.addNode(p, uri)
+        return uri
 
-    def connect(self, src_uri: str, dst_uri: str, weight: int):
-        if (src_uri, dst_uri) in self.arcs:
-            raise Exception('Connection between %s and %s already present!' % (src_uri, dst_uri))
-        self.__weights__[(src_uri, dst_uri)] = weight
-        self.__update__()
-        logging.debug("[%s] connected [%s] to [%s] ... " % (self.getLabel(), src_uri, dst_uri))
+    def createTransition(self, label=None, uri=None):
+        if label is None:
+            label = 'T' + str(self.ntransitions)
+        t = QTransition(label=label)
+        uri = self.__generateURI__(label, suffix=self.getLabel())
+        t.setLabel(uri)
+        self.addNode(t, uri)
+        return uri
+
+    def fire(self, t_uri):
+        logging.debug("[%s] %s firing... " % (self.getLabel(), t_uri))
+        for p_uri in self.getPlacesURIs():
+            res = self.weight(t_uri, p_uri) - self.weight(p_uri, t_uri)
+            if res < 0:
+                self.consume(p_uri, res)
+            elif res > 0:
+                self.produce(p_uri, res)
+        logging.debug("[%s] %s fire completed!" % (self.getLabel(), t_uri))
+
+    def getArcs(self):
+        return list(self.arcs)
+
+    def getEnabledTransitions(self):
+        v = []
+        for uri in self.getTransitionsURIs():
+            res = self.isTransitionEnabled(uri)
+            if res == True:
+                v.append(uri)
+        random.shuffle(v)
+        return v
+
+    def getNode(self, uri):
+        if uri in self.getPlacesURIs():
+            return self.__places__[uri]
+        if uri in self.getTransitionsURIs():
+            return self.__transitions__[uri]
+        return None
+
+    def getNodeLabel(self, uri):
+        if uri in self.getPlacesURIs():
+            if isinstance(self.getNode(uri), QNet):
+                return self.__subnet_URIs__[self.getNode(uri).getLabel()][uri]
+            return self.__places__[uri].getLabel()
+        elif uri in self.getTransitionsURIs():
+            if isinstance(self.getNode(uri), QNet):
+                return self.__subnet_URIs__[self.getNode(uri).getLabel()][uri]
+            return self.getNode(uri).getLabel()
+        else:
+            raise Exception("Requested URI does not exist")
+
+    def getPlaces(self):
+        return self.__places__
+
+    def getPlacesURIs(self):
+        return sorted(list(self.__places__.keys()))
+
+    def getTransitions(self):
+        return self.__transitions__
+
+    def getTransitionsURIs(self):
+        return sorted(list(self.__transitions__.keys()))
+
+    def getTokens(self, uri):
+        place = self.getNode(uri)
+        if isinstance(place, QPlace):
+            return place.getTokens()
+        return place.getTokens(self.__subnet_URIs__[place.getLabel()][uri])
+
+    def isMaxLimitReached(self, uri):
+        place = self.getNode(uri)
+        if isinstance(place, QPlace):
+            return place.isMaxLimitReached()
+        return place.isMaxLimitReached(self.__subnet_URIs__[place.getLabel()][uri])
+
+    def isTransitionEnabled(self, t_uri):
+        I_column_sum = 0
+        O_column_sum = 0
+
+        for p_uri in self.getPlacesURIs():
+            I_column_sum += self.weight(p_uri, t_uri)
+            O_column_sum += self.weight(t_uri, p_uri)
+
+        if I_column_sum == 0:
+            return False
+        if O_column_sum == 0:
+            return False
+
+        enabled = True
+        for p_uri in self.getPlacesURIs():
+            place = self.getNode(p_uri)
+            if isinstance(place, QPlace):
+                if place.isWorking() and (self.weight(t_uri, p_uri) > 0 or self.weight(p_uri, t_uri) > 0):
+                    return False
+                if place.isMaxLimitReached() and self.weight(t_uri, p_uri) > 0:
+                    return False
+                if place.getTokens() < self.weight(p_uri, t_uri):
+                    enabled = False
+            else:
+                remap_puri = self.__subnet_URIs__[place.getLabel()][p_uri]
+                if place.isWorking(remap_puri) and (self.weight(t_uri, p_uri) > 0 or self.weight(p_uri, t_uri) > 0):
+                    return False
+                if place.isMaxLimitReached(remap_puri) and self.weight(t_uri, p_uri) > 0:
+                    return False
+                if place.getTokens(remap_puri) < self.weight(p_uri, t_uri):
+                    enabled = False
+        return enabled
+
+    def isWorking(self, p_uri):
+        place = self.getNode(p_uri)
+        if isinstance(place, QPlace):
+            return place.isWorking()
+        return place.isWorking(self.__subnet_URIs__[place.getLabel()][p_uri])
+
+    def next_until_end(self):
+        for _ in self:
+            pass
+
+    def pendingTasks(self):
+        for p_uri in self.getPlacesURIs():
+            if self.isWorking(p_uri):
+                return True
+        return False
+
+    def produce(self, p_uri, weight):
+        place = self.__places__[p_uri]
+        if isinstance(place, QPlace):
+            place.produce(weight)
+        else:
+            place.produce(self.__subnet_URIs__[place.getLabel()][p_uri], weight)
+
+    def reset(self):
+        for place in self.__places__.values():
+            place.reset()
+
+    def start_async(self):
+        v = []
+        while True:
+            try:
+                self.__next__()
+            except:
+                if not self.pendingTasks():
+                    break
+            time.sleep(0.0001)
 
     def state(self):
         state = []
@@ -495,9 +494,10 @@ class QNet(QNode):
             state.append("%s=%d" % (uri, tokens))
         return state
 
-    def next_until_end(self):
-        for _ in self:
-            pass
+    def weight(self, src_uri, dst_uri):
+        if (src_uri, dst_uri) in self.__weights__.keys():
+            return self.__weights__[(src_uri, dst_uri)]
+        return 0
 
 class QNetRemote:
 
