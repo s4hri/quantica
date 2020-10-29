@@ -13,14 +13,15 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='quantica',
-    version='pre-rc1.0',
+    version='beta-rc1.0',
     description='A Python framework implemeting Petri Networks',
     url='https://github.com/s4hri/quantica',
-    download_url='https://github.com/s4hri/quantica/archive/pre-rc1.0.tar.gz',
+    download_url='https://github.com/s4hri/quantica/archive/beta-rc1.0.tar.gz',
     author='Davide De Tommaso',
     author_email='dtmdvd@gmail.com',
     keywords=['petri','networks','python3.8'],
     packages=find_packages(),
+    install_requires=["pykron>=0.11"],
     classifiers = [
                     'Programming Language :: Python :: 3.8',
                     'Programming Language :: Python :: 3.9'

@@ -38,7 +38,11 @@ from socketserver import ThreadingMixIn
 import xmlrpc.client
 
 import time
+import pykron
+from pykron.core import Task, AsyncRequest
 
+pykron.core.LOGGING_LEVEL = logging.DEBUG
+pykron.core.LOGGING_PATH = '.'
 FORMAT = '%(asctime)s.%(msecs)03d %(levelname)-5s %(message)s'
 
 class QNode:
@@ -93,8 +97,9 @@ class QPlace(QNode):
         if not self.__target_task__ is None:
             with self.__working__:
                 logging.debug("[%s] executing task ..." % self.getLabel())
-                t0 = time.perf_counter()
-                self.__target_task__()
+                task = Task(target=self.__target_task__,args=())
+                AsyncRequest(task).wait_for_completed()
+                #self.__target_task__()
                 logging.debug("[%s] task executed task!" % self.getLabel())
 
 class QTransition(QNode):

@@ -47,7 +47,7 @@ X1 = qnet.createPlace('X1', init_tokens=0, target_task=onset)
 X2 = qnet.createPlace('X2', init_tokens=0)
 X3 = qnet.createPlace('X3', init_tokens=0, target_task=offset)
 
-t_onset = QTimed('onset', PERIOD_MS)
+t_onset = QTimed('onset', TASK_PERIOD_MS)
 t_offset = QTimed('offset', TASK_DURATION_MS)
 qnet.addNet(t_onset)
 qnet.addNet(t_offset)
