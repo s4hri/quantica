@@ -99,7 +99,6 @@ class QPlace(QNode):
                 logging.debug("[%s] executing task ..." % self.getLabel())
                 task = Task(target=self.__target_task__,args=())
                 AsyncRequest(task).wait_for_completed()
-                #self.__target_task__()
                 logging.debug("[%s] task executed task!" % self.getLabel())
 
 class QTransition(QNode):

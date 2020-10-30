@@ -21,7 +21,7 @@ setup(
     author_email='dtmdvd@gmail.com',
     keywords=['petri','networks','python3.8'],
     packages=find_packages(),
-    install_requires=["pykron>=0.11"],
+    install_requires=["pykron>=0.13"],
     classifiers = [
                     'Programming Language :: Python :: 3.8',
                     'Programming Language :: Python :: 3.9'
